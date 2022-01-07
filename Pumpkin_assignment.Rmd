@@ -1,0 +1,176 @@
+---
+title: "Pumpkin assignment"
+author: "Bertram Marek"
+date: '2021 12 06 '
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+knitr::opts_chunk$set(warning = FALSE)
+library(tidytuesdayR)
+library(tidyverse)
+library(usmap)
+library(ggthemes)
+library(Hmisc)
+library(corrplot)
+library(psych)
+```
+
+### Explore data
+```{r}
+#Read data
+tt <- readr::read_csv("https://raw.githubusercontent.com/rfordatascience/tidytuesday/master/data/2021/2021-10-19/pumpkins.csv")
+
+#Making data usable
+pumpkins <- tt %>%
+  separate(id, into = c("year", "type")) %>%
+  rename(state = state_prov) %>%
+  mutate(across(c(weight_lbs, ott, place, est_weight), parse_number)) %>%
+  mutate(seed_mother = recode(seed_mother, unknown = "Unknown")) %>%
+  mutate(pollinator_father = recode(pollinator_father, self = "Self", open = "Open", unknown = "Unknown")) %>%
+  select(year, type, place, weight_lbs, grower_name, state, country, seed_mother, pollinator_father, ott, est_weight) %>%
+  filter(type == "P") %>% #Focusing on giant pumpkins
+  filter(!grepl("damaged", country)) #Deleting damaged entries
+  
+#Top 20 giant pumpkin
+
+top20 <- pumpkins %>%
+  arrange(desc(weight_lbs)) %>%
+  slice(1:20)
+
+top20
+
+#An Italian grower is the absolute winner globally, there is no american in the top4
+
+#Based on high numbers, I will play with giant pumpkins in the US
+
+#Filter US
+pumpkins_usa <- pumpkins %>%
+  filter(country == "United States")
+  
+#Which US state is the most interested in this competition? I have always wanted to plot a map.
+states_n <- pumpkins_usa %>%
+  count(state, sort = TRUE) 
+
+states_n
+
+plot_usmap(data = states_n, values = "n", color = "red", labels = TRUE) + 
+  scale_fill_continuous(low = "white", high = "red", name = "# of giant pumpkins", label = scales::comma) +
+  labs(title = "Giant pumpkins across US states") +
+  theme(legend.position = "right")
+
+#Wisconsin and California are the most interested in the competition. 4 states ignore it. 
+
+#Winners by year and state
+winners <- pumpkins_usa %>%
+  select(year, grower_name, state, weight_lbs, seed_mother, pollinator_father, place) %>%
+  filter(place <= 1)
+
+winners
+
+ggplot(data = winners, aes(x = year, y = weight_lbs)) +
+  geom_line(group = 1) +
+  labs(x = "Year", y = "Weight (lbs)", title = "The weight of winners in the US (2013-2019)") +
+  geom_point() +
+    theme_economist()
+
+#The winner always produced heavier pumpkin except in the last year
+
+#Checking mothers and fathers - which are the most used seeds and pollinators?
+mothers <- pumpkins %>%
+  count(seed_mother, sort = TRUE)
+
+mothers
+
+fathers <- pumpkins %>%
+  count(pollinator_father, sort = TRUE)
+
+fathers
+```
+### Analysis
+```{r}
+#Which countries are the most successful in the competition?
+pumpkins %>%
+  mutate(
+    country = fct_lump(country, n = 15),
+    country = fct_reorder(country, weight_lbs)) %>%
+  ggplot(aes(country, weight_lbs, color = country)) +
+  geom_boxplot(outlier.colour = NA) +
+  theme(legend.position = "none") +
+  geom_jitter(alpha = 0.2, width = 0.1) +
+  labs(title = "Successful countries", x = NULL, y = "Weight (lbs)") +
+  coord_flip()
+
+#Based on this, Belgium is the most successful country among the top15. US is the second. The Italian first and the Belgian second place are clearly recognizable. 
+
+#Correlation matrix and plot for relevant variables
+relevant <- pumpkins %>%
+  select(place, weight_lbs, ott, est_weight)
+
+relevant.rcorr = rcorr(as.matrix(relevant))
+relevant.rcorr
+
+#There is no surprise: place correlates negatively with other relevant variables. However, over-the-top inches look interesting as it measures a different dimension.
+
+#Checking Over-the-top inches and Weight (lbs) in a regression model - What is the relationship between the size and the weight?
+lra <- lm(weight_lbs ~ ott, data = relevant)
+
+summary(lra)
+
+#For every one lbs increase in weight, the model predicts an increase of ~2,4 inches.
+
+#Let's plot this relationship
+pumpkins %>%
+  filter(ott > 20, ott < 1e3) %>% #Filtering outliers
+  ggplot(aes(ott, weight_lbs, color = place)) +
+  geom_point(alpha = 0.1, size = 2) +
+  labs(title = "Size vs weight", x = "Over-the-top inches", y = "Weight (lbs)") +
+  scale_color_viridis_c(option = "rocket") +
+  geom_smooth()
+
+#Big and heavy pumpkins have more chance to win obviously. 
+
+#Let's see which seed_mother is the most successful in terms of final weight. #I have chosen the top10 cases in all dimension.
+target_m <- c("Unknown", "2145 McMullen", "2009 Wallace", "1985 Miller", "1911 Urena", "2363 Holland", "2008 Neptune", "1495 Stelts", "1317 Clementz", "2032 Mathison")
+mothers_anova <- filter(pumpkins, seed_mother %in% target_m)
+  
+mothers_anova %>%
+  mutate(seed_mother = fct_reorder(seed_mother, weight_lbs)) %>%
+  ggplot(aes(x = seed_mother, y = weight_lbs, color = seed_mother)) +
+  geom_boxplot(outlier.colour = NA) +
+  theme(legend.position = "none") +
+  geom_jitter(alpha = 0.2, width = 0.1) +
+  labs(title = "The success of seed mothers", x = "Seed mother", y = "Weight (lbs)") +
+  coord_flip()
+
+
+oneway.test(weight_lbs ~ seed_mother, data = mothers_anova, var.equal = FALSE)
+
+#ANOVA pointed out that there is significant differences between means. On average, 2145 McMullen seed_mother is the best.
+
+#Let's see which pollinator_father is the most successful in terms of final weight.
+target_f <- c("Self", "Open", "Unknown", "2009 Wallace", "2145 McMullen", "1985 Miller", "1911 Urena", "2363 Holland", "2032 Mathison", "2323 Meier")
+fathers_anova <- filter(pumpkins, pollinator_father %in% target_f)
+
+fathers_anova %>%
+  mutate(pollinator_father = fct_reorder(pollinator_father, weight_lbs)) %>%
+  ggplot(aes(x = pollinator_father, y = weight_lbs, color = pollinator_father)) +
+  geom_boxplot(outlier.colour = NA) +
+  theme(legend.position = "none") +
+  geom_jitter(alpha = 0.2, width = 0.1) +
+  labs(title = "The success of pollinator fathers", x = "Pollinator father", y = "Weight (lbs)") +
+  coord_flip()
+
+
+oneway.test(weight_lbs ~ pollinator_father, data = fathers_anova, var.equal = FALSE)
+
+#ANOVA pointed out that there is significant differences between means. On average, 2363 Holland pollinator_father is the best.
+
+#Overall, it does matter who is the mother or the father.
+
+#I was thinking about to set up a binary variable for seed_mother and pollinator_father to see whether the named seeds and pollinators are more successful than unknown or other cases but it would not show much. These figures are better.
+```
+
+
+
