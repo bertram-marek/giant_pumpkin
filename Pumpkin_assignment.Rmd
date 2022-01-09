@@ -118,7 +118,7 @@ lra <- lm(weight_lbs ~ ott, data = relevant)
 
 summary(lra)
 
-#For every one lbs increase in weight, the model predicts an increase of ~2,4 inches.
+#For every one inch increase in size, the model predicts an increase of ~2,4 lbs in weight.
 
 #Let's plot this relationship
 pumpkins %>%
